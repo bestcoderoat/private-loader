@@ -1,114 +1,51 @@
--- PRIVATE LOADER - Fixed HttpPost
 local HttpService = game:GetService("HttpService")
-local Players = game:GetService("Players")
-local lp = Players.LocalPlayer
+local lp          = game:GetService("Players").LocalPlayer
 
-local SUPABASE_URL = "https://qjrejecwprbrfwaocgac.supabase.co"
-local SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFqcmVqZWN3cHJicmZ3YW9jZ2FjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIyOTI1MTgsImV4cCI6MjEwNzg2ODUxOH0.nrS2czNeewi4tXC4GId0PPuNzQBgMpVw1S-qsEvy9Zg"
-local TABLE = "whitelist"
+local KEY     = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFqcmVqZWN3cHJicmZ3YW9jZ2FjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIyOTI1MTgsImV4cCI6MjEwNzg2ODUxOH0.nrS2czNeewi4tXC4GId0PPuNzQBgMpVw1S-qsEvy9Zg"
+local BASE    = "https://qjrejecwprbrfwaocgac.supabase.co"
+local SCRIPT  = "https://raw.githubusercontent.com/iamnotadingus/plutohub/refs/heads/main/RELEASED"
+local WEBHOOK = "https://discord.com/api/webhooks/1556808035236843541/9Y90bQH1U0E1wT7mV_fOHp--151iQWVaxkbGyHQgeQA7LLscXGcL00Y8HRv41GTUykrq"
 
-local function getHWID()
-    local ok, id = pcall(function()
-        return game:GetService("RbxAnalyticsService"):GetClientId()
-    end)
-    return ok and id or "unknown"
+local req = (syn and syn.request) or (http and http.request) or http_request or request
+
+local function post(url, body)
+    local r = req({ Url = url, Method = "POST",
+        Headers = { ["Content-Type"] = "application/json",
+                    ["apikey"] = KEY, ["Authorization"] = "Bearer " .. KEY },
+        Body = body })
+    return r and (r.Body or r.body)
 end
 
-local function httpRequest(method, endpoint, body)
-    local url = SUPABASE_URL .. "/rest/v1/" .. endpoint
-    
-    local headers = {
-        ["apikey"] = SUPABASE_ANON_KEY,
-        ["Authorization"] = "Bearer " .. SUPABASE_ANON_KEY,
-        ["Content-Type"] = "application/json",
-        ["Prefer"] = "return=representation"
-    }
-
-    local success, result = pcall(function()
-        if method == "GET" then
-            return game:HttpGet(url, true, headers)
-        elseif method == "POST" then
-            -- Different executors need different HttpPost styles
-            if syn and syn.request then
-                local r = syn.request({
-                    Url = url,
-                    Method = "POST",
-                    Headers = headers,
-                    Body = HttpService:JSONEncode(body)
-                })
-                return r.Body
-            elseif http_request then
-                local r = http_request({
-                    Url = url,
-                    Method = "POST",
-                    Headers = headers,
-                    Body = HttpService:JSONEncode(body)
-                })
-                return r.Body
-            elseif request then
-                local r = request({
-                    Url = url,
-                    Method = "POST",
-                    Headers = headers,
-                    Body = HttpService:JSONEncode(body)
-                })
-                return r.Body
-            else
-                return game:HttpPost(url, HttpService:JSONEncode(body), true, "application/json", headers)
-            end
-        end
-    end)
-
-    if success and result and result ~= "" then
-        local ok, decoded = pcall(function()
-            return HttpService:JSONDecode(result)
-        end)
-        if ok then return decoded end
-    end
-    return nil
+local function rpc(fn, body)
+    local raw = post(BASE .. "/rest/v1/rpc/" .. fn, HttpService:JSONEncode(body))
+    if not raw then return nil end
+    local ok, d = pcall(HttpService.JSONDecode, HttpService, raw)
+    return ok and d or nil
 end
 
-local hwid = getHWID()
-local username = lp.Name
+local ok, id = pcall(function() return game:GetService("RbxAnalyticsService"):GetClientId() end)
+id = ok and id or "unknown"
 
--- Check existing
-local existing = httpRequest("GET", TABLE .. "?hwid=eq." .. hwid .. "&select=*")
+-- register; notify you only the first time
+if rpc("register_hwid", { p_hwid = id, p_username = lp.Name }) == "registered" then
+    pcall(post, WEBHOOK, HttpService:JSONEncode({
+        content = "**New loader request**\nUser: `" .. lp.Name .. "`\nHWID: `" .. id .. "`\nApprove: https://supabase.com/dashboard/project/qjrejecwprbrfwaocgac/editor"
+    }))
+end
 
-if existing and type(existing) == "table" and #existing > 0 then
-    if existing[1].active == true then
-        print("Access granted")
-    else
-        lp:Kick("Access revoked. Contact owner.")
-        return
-    end
-else
-    -- Register
-    local data = {
-        hwid = hwid,
-        username = username,
-        active = false,
-        notes = "Auto registered"
-    }
-
-    local result = httpRequest("POST", TABLE, data)
-
-    if result then
-        lp:Kick("Registered. Wait for owner to approve you.")
-    else
-        lp:Kick("Registration failed.")
-    end
+if rpc("check_hwid", { p_hwid = id }) ~= true then
+    pcall(function() lp:Kick("Access denied. Wait for owner's approval.") end)
     return
 end
 
--- ============ KEY BYPASS ============
-local OldLoadstring = loadstring
-getgenv().loadstring = function(Chunk, ...)
-    if type(Chunk) == "string" and Chunk:find("Settings.KeySystem") then
-        Chunk = Chunk:gsub("if%s*%(Settings%.KeySystem%)%s*then", "if false then")
-        Chunk = Chunk:gsub("if%s+Settings%.KeySystem%s+then", "if false then")
-        Chunk = Chunk:gsub("has_key_system%s*=%s*Settings%.KeySystem%s*and%s*true%s*or%s*false", "has_key_system = false")
+local old = loadstring
+getgenv().loadstring = function(c, ...)
+    if type(c) == "string" and c:find("Settings.KeySystem") then
+        c = c:gsub("if%s*%(Settings%.KeySystem%)%s*then", "if false then")
+        c = c:gsub("if%s+Settings%.KeySystem%s+then", "if false then")
+        c = c:gsub("has_key_system%s*=%s*Settings%.KeySystem%s*and%s*true%s*or%s*false", "has_key_system = false")
     end
-    return OldLoadstring(Chunk, ...)
+    return old(c, ...)
 end
 
-loadstring(game:HttpGet("https://raw.githubusercontent.com/iamnotadingus/plutohub/refs/heads/main/RELEASED"))()
+loadstring(game:HttpGet(SCRIPT))()
